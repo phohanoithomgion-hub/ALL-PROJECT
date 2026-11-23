@@ -2367,9 +2367,11 @@ class HyperConnection(nn.Module):
                 if return_router_state:
                     new_router_state = (r_cs[:, :, -1].detach(), cnt_cs[:, -1].detach())
 
-        topk_idx = scores_tok.topk(self.top_k, dim=1).indices
-        tok_stream_mask = torch.zeros(B, n, T, device=x_out.device, dtype=x_out.dtype)
-        tok_stream_mask.scatter_(1, topk_idx, 1.0)
+        topk_vals, topk_idx = scores_tok.topk(self.top_k, dim=1)
+        topk_gates = torch.sigmoid(topk_vals.float()).to(x_out.dtype)
+        tok_stream_mask = torch.zeros(B, n, T, device=x_out.device, dtype=x_out.dtype).scatter(
+            1, topk_idx, topk_gates
+        )
         if valid_tok is not None:
             tok_stream_mask = tok_stream_mask * valid_tok.to(dtype=x_out.dtype).unsqueeze(1)
 
