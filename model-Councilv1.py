@@ -150,7 +150,7 @@ class CausalConv1d(nn.Module):
                 new_seq_cache[:, (k - 1 - T):] = seq_t.detach()
         return new_seq_cache
 
-def _run_conv_with_seq(self, x, seq_idx, T):
+    def _run_conv_with_seq(self, x, seq_idx, T):
         if T == 0:
             return torch.zeros_like(x)
         k = self.kernel_size
