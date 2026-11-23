@@ -753,12 +753,12 @@ class ThoughtGQAAttention(nn.Module):
             prev_ff = F.pad(ff_seq[:, :-1], (1, 0), value=-999999)
             is_seq_start = valid_tok & (ff_seq != prev_ff)
             q_prefix_mean = self._segmented_prefix_mean_4d(
-                q.float() * v_f[:, None, :, None], valid_tok, is_seq_start)
+                q.detach().float() * v_f[:, None, :, None], valid_tok, is_seq_start)
         else:
             seq_eff = None
             is_seq_start = torch.zeros(B, T, dtype=torch.bool, device=device)
             is_seq_start[:, 0] = valid_tok[:, 0]
-            q_cs = (q.float() * v_f[:, None, :, None]).cumsum(dim=2)
+            q_cs = (q.detach().float() * v_f[:, None, :, None]).cumsum(dim=2)
             cnt_cs = v_f.cumsum(dim=1).clamp(min=1.0)
             q_prefix_mean = q_cs / cnt_cs[:, None, :, None]
 
@@ -769,7 +769,7 @@ class ThoughtGQAAttention(nn.Module):
         is_blk_start = valid_tok & (ff_blk != prev_ff_blk)
         is_seg_start_k = is_seq_start | is_blk_start
 
-        k_f_seq = k.float() * v_f[:, None, :, None]
+        k_f_seq = k.detach().float() * v_f[:, None, :, None]
         k_bm_self = self._segmented_prefix_mean_4d(k_f_seq, valid_tok, is_seg_start_k)
         if self.num_groups > 1:
             k_self_h = k_bm_self.unsqueeze(2).expand(-1, -1, self.num_groups, -1, -1).reshape(B, H, T, hd)
@@ -777,7 +777,7 @@ class ThoughtGQAAttention(nn.Module):
             k_self_h = k_bm_self
 
         blk_idx_exp = tok_blk.unsqueeze(-1).unsqueeze(-1).expand(-1, -1, kv_h, hd)
-        k_t_f = k.transpose(1, 2).float()
+        k_t_f = k.detach().transpose(1, 2).float()
 
         if seq_eff is not None:
             uniq_seqs = torch.unique(seq_eff[valid_tok]) if valid_tok.any() else seq_eff.new_empty(0)
@@ -825,7 +825,7 @@ class ThoughtGQAAttention(nn.Module):
             q_pm_c = q_prefix_mean[:, :, qs:qe, :]
 
             if seq_k_bm_list is None:
-                scores_c = torch.einsum('bhqd,bnhd->bhqn', q_pm_c, k_bm_h)
+                scores_c = torch.einsum('bhqd,bnhd->bhqn', q_pm_c, k_bm_h).float()
                 blk_valid_c = valid_blk_global.unsqueeze(1).expand(-1, Qc, -1)
             else:
                 scores_c = torch.zeros(B, H, Qc, NB, device=device, dtype=torch.float32)
@@ -833,13 +833,13 @@ class ThoughtGQAAttention(nn.Module):
                 for s_val, k_bm_sh, vb_s in seq_k_bm_list:
                     qm_s = (seq_eff[:, qs:qe] == s_val) & valid_tok[:, qs:qe]
                     if qm_s.any():
-                        sc_s = torch.einsum('bhqd,bnhd->bhqn', q_pm_c, k_bm_sh)
+                        sc_s = torch.einsum('bhqd,bnhd->bhqn', q_pm_c, k_bm_sh).float()
                         scores_c = torch.where(qm_s[:, None, :, None], sc_s, scores_c)
                         blk_valid_c = torch.where(qm_s[:, :, None], vb_s.unsqueeze(1), blk_valid_c)
 
             diag_score = (q_pm_c * k_self_h[:, :, qs:qe, :]).sum(dim=-1)
             diag_idx = tok_blk[:, qs:qe].unsqueeze(1).unsqueeze(-1).expand(-1, H, -1, -1)
-            scores_c.scatter_(3, diag_idx, diag_score.unsqueeze(-1))
+            scores_c = scores_c.scatter(3, diag_idx, diag_score.unsqueeze(-1).to(scores_c.dtype))
 
             causal_blk_c = (blk_range <= tok_blk[:, qs:qe].unsqueeze(-1)) & valid_tok[:, qs:qe].unsqueeze(-1) & blk_valid_c
             sel_c = sel_eff[:, qs:qe, :] & causal_blk_c
